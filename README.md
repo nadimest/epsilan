@@ -1,8 +1,8 @@
 # Epsilan
 
-C firmware experiments toward a SiLA 2 instrument on M5Stack CoreS3.
+Native C firmware for running a compact SiLA 2 server on an M5Stack CoreS3.
 
-The first firmware brings up the display and BMI270 accelerometer, publishes readings over USB at 2 Hz, and accepts USB commands. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart. It does not implement gRPC or SiLA yet. The architecture and planned cloud connection are described in [RESEARCH.md](RESEARCH.md).
+The firmware brings up the display and BMI270 accelerometer, publishes readings over USB at 2 Hz, and exposes them as a SiLA observable property over plaintext gRPC. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart.
 
 Use the full CoreS3. CoreS3 SE lacks the motion sensor. This build uses Espressif's CoreS3 BSP 3.0.0 and BMI270 driver 1.1.0, with transitive dependencies pinned in `firmware/dependencies.lock`. Different LCD revisions may require a newer BSP.
 
@@ -28,13 +28,55 @@ bash scripts/idf.sh -p "$PORT" flash
 .tools/idf-tools/python_env/idf5.4_py3.11_env/bin/python scripts/usb_console.py --port "$PORT" --seconds 5 --command 'backlight 30'
 ```
 
-The display should show acceleration in m/s² and memory information. Tilt the device to change the gravity vector. `info` prints the persistent Epsilan UUID, memory, and backlight setting. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
+The display should show acceleration in m/s², memory information, its IP address, and `SiLA :50052`. Tilt the device to change the gravity vector. `info` prints the persistent Epsilan UUID, memory, and backlight setting. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
 
 On first boot the display shows a provisioning QR code, a `PROV_XXXXXX` BLE service name, and a proof-of-possession (PoP). In Espressif's [ESP BLE Provisioning app for iOS](https://apps.apple.com/us/app/esp-ble-provisioning/id1473590141) or [Android](https://play.google.com/store/apps/details?id=com.espressif.provble), scan the code, select a 2.4 GHz network, and enter its password. The QR content is provisioning data for that app, so a normal camera app is not expected to open it as a web page. The direct USB `wifi` command remains available for bench setup.
 
-Provisioning state and Wi-Fi credentials survive restart. On the main screen, press and hold **Reset Wi-Fi** to erase the saved network and return to provisioning; a normal tap does not reset it. Setup secrets are random per board and stored in NVS. The minimum brightness is deliberately above zero for bring-up. This is a development USB interface, not a SiLA endpoint.
+Provisioning state and Wi-Fi credentials survive restart. On the main screen, press and hold **Reset Wi-Fi** to erase the saved network and return to provisioning; a normal tap does not reset it. Setup secrets are random per board and stored in NVS. The minimum brightness is deliberately above zero for bring-up. The USB command interface remains available independently of the network SiLA endpoint.
 
-Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The current firmware initializes NVS and connects to Wi-Fi, but it does not implement OTA, cloud connectivity, gRPC, SiLA, or change eFuses.
+## Browse and generate a Python connector
+
+The server advertises `_sila._tcp.local` and currently implements:
+
+- `org.silastandard/core/SiLAService/v1`
+- `io.epsilan/sensors/Accelerometer/v1`
+
+Using Labplane's `unitelabs-sila` integration:
+
+```sh
+cd /path/to/labplane
+uv run sila-codegen discover --timeout 5
+uv run sila-codegen generate DEVICE_IP:50052 \
+  --name EpsilanCoreS3 \
+  --output /tmp/epsilan_core_s3.py
+```
+
+The generated facade can subscribe to the onboard sensor without knowing its protobuf schema:
+
+```python
+import asyncio
+
+from epsilan_core_s3 import EpsilanCoreS3
+
+
+async def main() -> None:
+    async with await EpsilanCoreS3.connect(
+        "DEVICE_IP:50052", timeout=8_000
+    ) as device:
+        samples = await device.accelerometer.subscribe_acceleration(timeout=4_000)
+        try:
+            async for sample in samples:
+                print(sample)  # {'X': ..., 'Y': ..., 'Z': ...}
+        finally:
+            samples.close()
+
+
+asyncio.run(main())
+```
+
+Timeouts passed to `unitelabs-sila` are milliseconds. The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close a browser or generated connector before opening the next client; long-running observable streams remain open until the client cancels or disconnects.
+
+Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. Cloud connectivity, TLS, OTA management, and eFuse changes are not implemented yet.
 
 ## Restore this board's factory backup
 

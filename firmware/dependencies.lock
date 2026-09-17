@@ -155,6 +155,26 @@ dependencies:
     targets:
     - esp32s3
     version: 3.0.0
+  espressif/mdns:
+    component_hash: 3ec0af5f6bce310512e90f482388d21cc7c0e99668172d2f895356165fc6f7c5
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.8.2
+  espressif/nghttp:
+    component_hash: e0429dc6ecf6fdfab077a52c3eb5846c1c4a4a6d969633e8d1227b438b78530a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.69.0
   espressif/sensor_hub:
     component_hash: ea30db551c34aee2862482abf8b3164dd3855ecb4b4659b1e6878455c9cb9e22
     dependencies:
@@ -178,7 +198,7 @@ dependencies:
       type: idf
     version: 5.4.3
   lvgl/lvgl:
-    component_hash: d5e723db3a3feca71e34e333a6598b7624e3822577d374e1d44f0e18374952e1
+    component_hash: 7d82410747bbfb319531449749e940f440f8414f041f9eaba13f0d1dd7f58cdd
     dependencies:
     - name: espressif/freetype
       registry_url: https://components.espressif.com
@@ -207,11 +227,13 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 9.6.0
+    version: 9.6.0~1
 direct_dependencies:
 - espressif/bmi270
 - espressif/m5stack_core_s3
+- espressif/mdns
+- espressif/nghttp
 - idf
-manifest_hash: 47e0f48405d21ed0cc1eda91681a8801c1cd380f144944edc82cea8b1ab8cf47
+manifest_hash: f06c77286b7cf9f4971ff6efbcca6bde0d48f0e64d2199bd3727d5076ddb4751
 target: esp32s3
 version: 2.0.0

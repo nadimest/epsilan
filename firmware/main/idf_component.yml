@@ -2,3 +2,5 @@ dependencies:
   idf: ">=5.4,<5.5"
   espressif/m5stack_core_s3: "3.0.0"
   espressif/bmi270: "1.1.0"
+  espressif/mdns: "1.8.2"
+  espressif/nghttp: "1.69.0"

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Feature SiLA2Version="1.0" FeatureVersion="1.0" MaturityLevel="Normative"
+         Originator="org.silastandard" Category="core"
+         xmlns="http://www.sila-standard.org"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.sila-standard.org https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd">
+  <Identifier>SiLAService</Identifier>
+  <DisplayName>SiLA Service</DisplayName>
+  <Description>Describes this SiLA server and its implemented Features.</Description>
+  <Command>
+    <Identifier>GetFeatureDefinition</Identifier>
+    <DisplayName>Get Feature Definition</DisplayName>
+    <Description>Returns the XML definition of an implemented Feature.</Description>
+    <Observable>No</Observable>
+    <Parameter>
+      <Identifier>FeatureIdentifier</Identifier>
+      <DisplayName>Feature Identifier</DisplayName>
+      <Description>Fully qualified identifier of the requested Feature.</Description>
+      <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><FullyQualifiedIdentifier>FeatureIdentifier</FullyQualifiedIdentifier></Constraints></Constrained></DataType>
+    </Parameter>
+    <Response>
+      <Identifier>FeatureDefinition</Identifier>
+      <DisplayName>Feature Definition</DisplayName>
+      <Description>Feature definition in XML format.</Description>
+      <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><Schema><Type>Xml</Type><Url>https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd</Url></Schema></Constraints></Constrained></DataType>
+    </Response>
+    <DefinedExecutionErrors><Identifier>UnimplementedFeature</Identifier></DefinedExecutionErrors>
+  </Command>
+  <Command>
+    <Identifier>SetServerName</Identifier>
+    <DisplayName>Set Server Name</DisplayName>
+    <Description>Sets the human-readable server name.</Description>
+    <Observable>No</Observable>
+    <Parameter>
+      <Identifier>ServerName</Identifier>
+      <DisplayName>Server Name</DisplayName>
+      <Description>New human-readable server name.</Description>
+      <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><MaximalLength>255</MaximalLength></Constraints></Constrained></DataType>
+    </Parameter>
+  </Command>
+  <Property>
+    <Identifier>ServerName</Identifier><DisplayName>Server Name</DisplayName>
+    <Description>Human-readable server name.</Description><Observable>No</Observable>
+    <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><MaximalLength>255</MaximalLength></Constraints></Constrained></DataType>
+  </Property>
+  <Property>
+    <Identifier>ServerType</Identifier><DisplayName>Server Type</DisplayName>
+    <Description>Model or type of this server.</Description><Observable>No</Observable>
+    <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><Pattern>[A-Z][a-zA-Z0-9]*</Pattern></Constraints></Constrained></DataType>
+  </Property>
+  <Property>
+    <Identifier>ServerUUID</Identifier><DisplayName>Server UUID</DisplayName>
+    <Description>Stable globally unique identifier of this server.</Description><Observable>No</Observable>
+    <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><Length>36</Length><Pattern>[0-9a-f]{8}\-[0-9a-f]{4}\-[0-9a-f]{4}\-[0-9a-f]{4}\-[0-9a-f]{12}</Pattern></Constraints></Constrained></DataType>
+  </Property>
+  <Property>
+    <Identifier>ServerDescription</Identifier><DisplayName>Server Description</DisplayName>
+    <Description>Description of this server.</Description><Observable>No</Observable>
+    <DataType><Basic>String</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>ServerVersion</Identifier><DisplayName>Server Version</DisplayName>
+    <Description>Version of this server implementation.</Description><Observable>No</Observable>
+    <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><Pattern>(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?(_[_a-zA-Z0-9]+)?</Pattern></Constraints></Constrained></DataType>
+  </Property>
+  <Property>
+    <Identifier>ServerVendorURL</Identifier><DisplayName>Server Vendor URL</DisplayName>
+    <Description>Project website.</Description><Observable>No</Observable>
+    <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><Pattern>https?://.+</Pattern></Constraints></Constrained></DataType>
+  </Property>
+  <Property>
+    <Identifier>ImplementedFeatures</Identifier><DisplayName>Implemented Features</DisplayName>
+    <Description>Fully qualified identifiers of all implemented Features.</Description><Observable>No</Observable>
+    <DataType><List><DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><FullyQualifiedIdentifier>FeatureIdentifier</FullyQualifiedIdentifier></Constraints></Constrained></DataType></List></DataType>
+  </Property>
+  <DefinedExecutionError>
+    <Identifier>UnimplementedFeature</Identifier><DisplayName>Unimplemented Feature</DisplayName>
+    <Description>The requested Feature is not implemented by this server.</Description>
+  </DefinedExecutionError>
+</Feature>

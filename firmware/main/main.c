@@ -23,6 +23,7 @@
 #include "bsp/esp-bsp.h"
 #include "bmi270.h"
 #include "lvgl.h"
+#include "sila_server.h"
 
 static const char *TAG = "epsilan";
 static lv_obj_t *readings;
@@ -203,8 +204,10 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
         set_network_status("Wi-Fi reconnecting...");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = event_data;
-        snprintf(network_status, sizeof(network_status), "Wi-Fi " IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(network_status, sizeof(network_status), "Wi-Fi " IPSTR " / SiLA :%d",
+                 IP2STR(&event->ip_info.ip), EPSILAN_SILA_PORT);
         ESP_LOGI(TAG, "Wi-Fi connected: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_ERROR_CHECK(sila_server_start(server_uuid));
     } else if (event_base == WIFI_PROV_EVENT) {
         if (event_id == WIFI_PROV_CRED_SUCCESS) {
             ESP_ERROR_CHECK(mark_epsilan_wifi_configured());
@@ -400,6 +403,7 @@ void app_main(void)
         int64_t uptime = esp_timer_get_time() / 1000000;
         if (sample_err == ESP_OK) {
             ax *= 9.80665f; ay *= 9.80665f; az *= 9.80665f;
+            sila_server_set_acceleration(ax, ay, az);
             ESP_LOGI(TAG, "SAMPLE seq=%" PRIu32 " ax=%.3f ay=%.3f az=%.3f m/s2 internal_free=%u",
                      sequence++, ax, ay, az, free_internal);
         } else {

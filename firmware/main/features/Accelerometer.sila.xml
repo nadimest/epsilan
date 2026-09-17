@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Feature SiLA2Version="1.0" FeatureVersion="1.0"
+         Originator="io.epsilan" Category="sensors"
+         xmlns="http://www.sila-standard.org"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.sila-standard.org https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd">
+  <Identifier>Accelerometer</Identifier>
+  <DisplayName>CoreS3 Accelerometer</DisplayName>
+  <Description>Reports the current three-axis acceleration vector in metres per second squared.</Description>
+  <Property>
+    <Identifier>Acceleration</Identifier>
+    <DisplayName>Acceleration</DisplayName>
+    <Description>Current X, Y, and Z acceleration in metres per second squared.</Description>
+    <Observable>Yes</Observable>
+    <DataType>
+      <Structure>
+        <Element><Identifier>X</Identifier><DisplayName>X Acceleration</DisplayName><Description>Acceleration on the X axis.</Description><DataType><Basic>Real</Basic></DataType></Element>
+        <Element><Identifier>Y</Identifier><DisplayName>Y Acceleration</DisplayName><Description>Acceleration on the Y axis.</Description><DataType><Basic>Real</Basic></DataType></Element>
+        <Element><Identifier>Z</Identifier><DisplayName>Z Acceleration</DisplayName><Description>Acceleration on the Z axis.</Description><DataType><Basic>Real</Basic></DataType></Element>
+      </Structure>
+    </DataType>
+  </Property>
+</Feature>

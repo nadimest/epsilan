@@ -67,6 +67,25 @@ The server advertises `_sila._tcp.local` and currently implements:
 - `io.epsilan/device/PowerStatus/v1`
 - `io.epsilan/cloud/CloudConfiguration/v1`
 
+The local and cloud transports expose the same nine telemetry properties. All are
+observable and publish their latest value at the firmware's 2 Hz sampling rate.
+
+| Feature | Property | Type and meaning |
+|---|---|---|
+| `Accelerometer` | `Acceleration` | `X`, `Y`, and `Z` real values in m/s² |
+| `Gyroscope` | `AngularRate` | `X`, `Y`, and `Z` real values in degrees/s |
+| `OpticalSensor` | `AmbientLight` | Estimated illuminance as a real value in lux |
+| `OpticalSensor` | `Proximity` | Raw reflected-infrared count from 0–2047; a larger value usually means a nearer target |
+| `PowerStatus` | `BatteryLevel` | Integer state of charge in percent; zero when no battery is detected |
+| `PowerStatus` | `BatteryVoltage` | Real value in volts; zero when no battery is detected |
+| `PowerStatus` | `BatteryPresent` | Boolean battery-detection state |
+| `PowerStatus` | `ExternalPower` | Boolean valid-USB-power state |
+| `PowerStatus` | `Charging` | Boolean active-charging state |
+
+`Proximity` is a sensor count, not a calibrated distance. A USB-powered CoreS3
+without a detected battery will report `ExternalPower=true`, `BatteryPresent=false`,
+and zero for battery level and voltage.
+
 The `CloudConfiguration` feature exposes `SetCloudConnection` with endpoint, port, TLS, and enabled parameters, plus read-only properties for the saved values. A successful update persists to NVS and restarts the device after returning the RPC response.
 
 The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Disconnect the active client before opening another one; long-running observable streams remain open until the client cancels or disconnects.

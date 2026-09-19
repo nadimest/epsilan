@@ -47,7 +47,7 @@ bash scripts/idf.sh build
 bash scripts/idf.sh -p "$PORT" flash
 ```
 
-The current image builds to about 1.65 MiB. Each 4 MiB application slot still has 59% free.
+The current image builds to about 1.67 MiB. Each 4 MiB application slot still has 58% free.
 
 USB flashing has a few physical wrinkles. You need the correct serial port, the board may need a 3-second reset-button hold to enter download mode, and keeping a factory backup is wise. Those are small chores for one device on a workbench.
 

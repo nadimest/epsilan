@@ -46,9 +46,9 @@ On first boot the display shows a provisioning QR code, a `PROV_XXXXXX` BLE serv
 
 Provisioning state and Wi-Fi credentials survive restart. On the main screen, press and hold **Reset Wi-Fi** to erase the saved network and return to provisioning; a normal tap does not reset it. Setup secrets are random per board and stored in NVS. The minimum brightness is deliberately above zero for bring-up. The USB command interface remains available independently of the network SiLA endpoint.
 
-## Test the SiLA server
+## SiLA interface
 
-Use the public [UniteLabs SiLA Browser](https://gitlab.com/unitelabs/sila2/sila-browser) to scan the local network, open the CoreS3 server, inspect its features, read the current acceleration, and subscribe to the observable acceleration stream.
+Client integrations can use UniteLabs' public [`unitelabs-sila`](https://pypi.org/project/unitelabs-sila/) Python library. This repository contains the embedded server, its feature definitions, and its firmware.
 
 The server advertises `_sila._tcp.local` and currently implements:
 
@@ -58,7 +58,7 @@ The server advertises `_sila._tcp.local` and currently implements:
 
 The `CloudConfiguration` feature exposes `SetCloudConnection` with endpoint, port, TLS, and enabled parameters, plus read-only properties for the saved values. A successful update persists to NVS and restarts the device after returning the RPC response.
 
-The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close the browser before opening another client; long-running observable streams remain open until the client cancels or disconnects.
+The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Disconnect the active client before opening another one; long-running observable streams remain open until the client cancels or disconnects.
 
 Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport now connects over TLS, handles unary commands and properties, streams acceleration to up to four subscribers, accepts cancellation, and reconnects with backoff. Cloud messages are capped at 2 KiB. Device enrollment and per-device authentication, observable commands, binary transfer, OTA management, secure boot, flash encryption, and eFuse changes are not implemented yet.
 

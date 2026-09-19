@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Feature SiLA2Version="1.0" FeatureVersion="1.0"
+         Originator="io.epsilan" Category="device"
+         xmlns="http://www.sila-standard.org"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.sila-standard.org https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd">
+  <Identifier>PowerStatus</Identifier>
+  <DisplayName>CoreS3 Power Status</DisplayName>
+  <Description>Reports battery and external-power state from the onboard AXP2101.</Description>
+  <Property>
+    <Identifier>BatteryLevel</Identifier><DisplayName>Battery Level</DisplayName>
+    <Description>Battery state of charge in percent. Zero when no battery is detected.</Description>
+    <Observable>Yes</Observable><DataType><Basic>Integer</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>BatteryVoltage</Identifier><DisplayName>Battery Voltage</DisplayName>
+    <Description>Battery voltage in volts. Zero when no battery is detected.</Description>
+    <Observable>Yes</Observable><DataType><Basic>Real</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>BatteryPresent</Identifier><DisplayName>Battery Present</DisplayName>
+    <Description>Whether the power-management IC detects a battery.</Description>
+    <Observable>Yes</Observable><DataType><Basic>Boolean</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>ExternalPower</Identifier><DisplayName>External Power</DisplayName>
+    <Description>Whether valid USB input power is present.</Description>
+    <Observable>Yes</Observable><DataType><Basic>Boolean</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>Charging</Identifier><DisplayName>Charging</DisplayName>
+    <Description>Whether the battery charger is actively charging.</Description>
+    <Observable>Yes</Observable><DataType><Basic>Boolean</Basic></DataType>
+  </Property>
+</Feature>

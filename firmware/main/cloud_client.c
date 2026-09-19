@@ -24,23 +24,35 @@
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define NV(NAME, VALUE) { (uint8_t *)(NAME), (uint8_t *)(VALUE), sizeof(NAME) - 1, strlen(VALUE), NGHTTP2_NV_FLAG_NONE }
 #define CLOUD_CONNECT_PATH "/sila2.org.silastandard.CloudClientEndpoint/ConnectSiLAServer"
-#define ACCELERATION_PROPERTY_FQI "io.epsilan/sensors/Accelerometer/v1/Property/Acceleration"
-#define CLOUD_SUBSCRIPTION_MAX 4
+#define CLOUD_SUBSCRIPTION_MAX 12
 
 static const char *TAG = "epsilan_cloud";
 static bool task_started;
 static bool sntp_started;
-static QueueHandle_t acceleration_queue;
+static QueueHandle_t telemetry_queue;
 
 typedef struct {
-    float x;
-    float y;
-    float z;
-} cloud_acceleration_t;
+    const char *fqi;
+    const char *name;
+    epsilan_property_t property;
+} observable_property_t;
+
+static const observable_property_t observable_properties[] = {
+    { "io.epsilan/sensors/Accelerometer/v1/Property/Acceleration", "Acceleration", EPSILAN_PROPERTY_ACCELERATION },
+    { "io.epsilan/sensors/Gyroscope/v1/Property/AngularRate", "AngularRate", EPSILAN_PROPERTY_ANGULAR_RATE },
+    { "io.epsilan/sensors/OpticalSensor/v1/Property/AmbientLight", "AmbientLight", EPSILAN_PROPERTY_AMBIENT_LIGHT },
+    { "io.epsilan/sensors/OpticalSensor/v1/Property/Proximity", "Proximity", EPSILAN_PROPERTY_PROXIMITY },
+    { "io.epsilan/device/PowerStatus/v1/Property/BatteryLevel", "BatteryLevel", EPSILAN_PROPERTY_BATTERY_LEVEL },
+    { "io.epsilan/device/PowerStatus/v1/Property/BatteryVoltage", "BatteryVoltage", EPSILAN_PROPERTY_BATTERY_VOLTAGE },
+    { "io.epsilan/device/PowerStatus/v1/Property/BatteryPresent", "BatteryPresent", EPSILAN_PROPERTY_BATTERY_PRESENT },
+    { "io.epsilan/device/PowerStatus/v1/Property/ExternalPower", "ExternalPower", EPSILAN_PROPERTY_EXTERNAL_POWER },
+    { "io.epsilan/device/PowerStatus/v1/Property/Charging", "Charging", EPSILAN_PROPERTY_CHARGING },
+};
 
 typedef struct {
     uint8_t uuid[64];
     size_t uuid_length;
+    epsilan_property_t property;
 } cloud_subscription_t;
 
 static void cloud_log_memory(const char *stage)
@@ -179,8 +191,8 @@ typedef struct {
     size_t inbound_length;
     cloud_outbound_t *outbound_head;
     cloud_outbound_t *outbound_tail;
-    cloud_subscription_t acceleration_subscriptions[CLOUD_SUBSCRIPTION_MAX];
-    size_t acceleration_subscription_count;
+    cloud_subscription_t subscriptions[CLOUD_SUBSCRIPTION_MAX];
+    size_t subscription_count;
 } cloud_connection_t;
 
 static size_t cloud_varint_size(size_t value)
@@ -347,18 +359,38 @@ static nghttp2_ssize cloud_request_read_callback(nghttp2_session *session, int32
     return (nghttp2_ssize)count;
 }
 
-static void cloud_send_acceleration_value(cloud_connection_t *connection,
-                                          const uint8_t *uuid, size_t uuid_length)
+static const observable_property_t *cloud_find_observable(const uint8_t *fqi, size_t fqi_length)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(observable_properties); ++i) {
+        const observable_property_t *candidate = &observable_properties[i];
+        if (fqi_length == strlen(candidate->fqi) && !memcmp(fqi, candidate->fqi, fqi_length)) {
+            return candidate;
+        }
+    }
+    return NULL;
+}
+
+static const char *cloud_property_name(epsilan_property_t property)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(observable_properties); ++i) {
+        if (observable_properties[i].property == property) return observable_properties[i].name;
+    }
+    return "unknown";
+}
+
+static void cloud_send_property_value(cloud_connection_t *connection,
+                                      const cloud_subscription_t *subscription)
 {
     size_t payload_length;
-    uint8_t *payload = sila_server_acceleration_value(&payload_length);
+    uint8_t *payload = sila_server_property_value(subscription->property, &payload_length);
     if (!payload) return;
     size_t value_length;
     uint8_t *value = cloud_bytes_field(1, payload, payload_length, &value_length);
     free(payload);
     if (!value) return;
     size_t response_length;
-    uint8_t *response = cloud_server_message(uuid, uuid_length, 9, value, value_length,
+    uint8_t *response = cloud_server_message(subscription->uuid, subscription->uuid_length,
+                                             9, value, value_length,
                                              &response_length);
     free(value);
     if (response) {
@@ -367,47 +399,48 @@ static void cloud_send_acceleration_value(cloud_connection_t *connection,
     }
 }
 
-static void cloud_send_pending_acceleration(cloud_connection_t *connection)
+static void cloud_send_pending_telemetry(cloud_connection_t *connection)
 {
-    cloud_acceleration_t ignored;
-    if (!acceleration_queue || xQueueReceive(acceleration_queue, &ignored, 0) != pdPASS) return;
-    for (size_t i = 0; i < connection->acceleration_subscription_count; ++i) {
-        cloud_subscription_t *subscription = &connection->acceleration_subscriptions[i];
-        cloud_send_acceleration_value(connection, subscription->uuid, subscription->uuid_length);
+    uint8_t ignored;
+    if (!telemetry_queue || xQueueReceive(telemetry_queue, &ignored, 0) != pdPASS) return;
+    for (size_t i = 0; i < connection->subscription_count; ++i) {
+        cloud_send_property_value(connection, &connection->subscriptions[i]);
     }
 }
 
-static void cloud_add_acceleration_subscription(cloud_connection_t *connection,
-                                                const uint8_t *uuid, size_t uuid_length)
+static void cloud_add_subscription(cloud_connection_t *connection,
+                                   const uint8_t *uuid, size_t uuid_length,
+                                   epsilan_property_t property)
 {
-    if (uuid_length > sizeof(connection->acceleration_subscriptions[0].uuid)) return;
-    for (size_t i = 0; i < connection->acceleration_subscription_count; ++i) {
-        cloud_subscription_t *subscription = &connection->acceleration_subscriptions[i];
+    if (uuid_length > sizeof(connection->subscriptions[0].uuid)) return;
+    for (size_t i = 0; i < connection->subscription_count; ++i) {
+        cloud_subscription_t *subscription = &connection->subscriptions[i];
         if (subscription->uuid_length == uuid_length && !memcmp(subscription->uuid, uuid, uuid_length)) {
             return;
         }
     }
-    if (connection->acceleration_subscription_count == CLOUD_SUBSCRIPTION_MAX) {
-        ESP_LOGW(TAG, "Cloud acceleration subscription limit reached");
+    if (connection->subscription_count == CLOUD_SUBSCRIPTION_MAX) {
+        ESP_LOGW(TAG, "Cloud telemetry subscription limit reached");
         return;
     }
     cloud_subscription_t *subscription =
-        &connection->acceleration_subscriptions[connection->acceleration_subscription_count++];
+        &connection->subscriptions[connection->subscription_count++];
     memcpy(subscription->uuid, uuid, uuid_length);
     subscription->uuid_length = uuid_length;
-    ESP_LOGI(TAG, "Cloud subscribed to Acceleration");
-    cloud_send_acceleration_value(connection, uuid, uuid_length);
+    subscription->property = property;
+    ESP_LOGI(TAG, "Cloud subscribed to %s", cloud_property_name(property));
+    cloud_send_property_value(connection, subscription);
 }
 
-static void cloud_remove_acceleration_subscription(cloud_connection_t *connection,
-                                                   const uint8_t *uuid, size_t uuid_length)
+static void cloud_remove_subscription(cloud_connection_t *connection,
+                                      const uint8_t *uuid, size_t uuid_length)
 {
-    for (size_t i = 0; i < connection->acceleration_subscription_count; ++i) {
-        cloud_subscription_t *subscription = &connection->acceleration_subscriptions[i];
+    for (size_t i = 0; i < connection->subscription_count; ++i) {
+        cloud_subscription_t *subscription = &connection->subscriptions[i];
         if (subscription->uuid_length == uuid_length && !memcmp(subscription->uuid, uuid, uuid_length)) {
-            connection->acceleration_subscriptions[i] =
-                connection->acceleration_subscriptions[--connection->acceleration_subscription_count];
-            ESP_LOGI(TAG, "Cloud cancelled Acceleration subscription");
+            ESP_LOGI(TAG, "Cloud cancelled %s subscription",
+                     cloud_property_name(subscription->property));
+            connection->subscriptions[i] = connection->subscriptions[--connection->subscription_count];
             return;
         }
     }
@@ -440,10 +473,12 @@ static void cloud_handle_message(cloud_connection_t *connection, const uint8_t *
     } else if (cloud_read_bytes_field(message, message_length, 9, &body, &body_length)) {
         const uint8_t *fqi;
         size_t fqi_length;
-        if (cloud_read_bytes_field(body, body_length, 1, &fqi, &fqi_length) &&
-            fqi_length == strlen(ACCELERATION_PROPERTY_FQI) &&
-            !memcmp(fqi, ACCELERATION_PROPERTY_FQI, fqi_length)) {
-            cloud_add_acceleration_subscription(connection, uuid, uuid_length);
+        const observable_property_t *property = NULL;
+        if (cloud_read_bytes_field(body, body_length, 1, &fqi, &fqi_length)) {
+            property = cloud_find_observable(fqi, fqi_length);
+        }
+        if (property) {
+            cloud_add_subscription(connection, uuid, uuid_length, property->property);
         } else {
             size_t response_length;
             uint8_t *response = cloud_error_message(uuid, uuid_length, true,
@@ -452,7 +487,7 @@ static void cloud_handle_message(cloud_connection_t *connection, const uint8_t *
         }
         return;
     } else if (cloud_read_bytes_field(message, message_length, 12, &body, &body_length)) {
-        cloud_remove_acceleration_subscription(connection, uuid, uuid_length);
+        cloud_remove_subscription(connection, uuid, uuid_length);
         return;
     } else {
         size_t response_length;
@@ -692,7 +727,7 @@ static bool cloud_serve(esp_tls_t *tls, const epsilan_cloud_config_t *config)
         } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
             goto done;
         }
-        cloud_send_pending_acceleration(&connection);
+        cloud_send_pending_telemetry(&connection);
         if (nghttp2_session_send(connection.session) != 0) goto done;
     }
 
@@ -732,9 +767,9 @@ esp_err_t epsilan_cloud_client_start(void)
     epsilan_cloud_config_t config;
     ESP_RETURN_ON_ERROR(epsilan_cloud_config_load(&config), TAG, "load configuration");
     if (!config.enabled) return ESP_OK;
-    if (!acceleration_queue) {
-        acceleration_queue = xQueueCreate(1, sizeof(cloud_acceleration_t));
-        if (!acceleration_queue) return ESP_ERR_NO_MEM;
+    if (!telemetry_queue) {
+        telemetry_queue = xQueueCreate(1, sizeof(uint8_t));
+        if (!telemetry_queue) return ESP_ERR_NO_MEM;
     }
     if (xTaskCreate(cloud_client_task, "sila_cloud", 16384, NULL, 4, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
@@ -743,9 +778,9 @@ esp_err_t epsilan_cloud_client_start(void)
     return ESP_OK;
 }
 
-void epsilan_cloud_client_publish_acceleration(float x, float y, float z)
+void epsilan_cloud_client_publish_telemetry(void)
 {
-    if (!acceleration_queue) return;
-    const cloud_acceleration_t value = { .x = x, .y = y, .z = z };
-    xQueueOverwrite(acceleration_queue, &value);
+    if (!telemetry_queue) return;
+    const uint8_t update = 1;
+    xQueueOverwrite(telemetry_queue, &update);
 }

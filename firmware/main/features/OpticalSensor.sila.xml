@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Feature SiLA2Version="1.0" FeatureVersion="1.0"
+         Originator="io.epsilan" Category="sensors"
+         xmlns="http://www.sila-standard.org"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.sila-standard.org https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd">
+  <Identifier>OpticalSensor</Identifier>
+  <DisplayName>CoreS3 Optical Sensor</DisplayName>
+  <Description>Reports ambient light and raw proximity from the onboard LTR-553.</Description>
+  <Property>
+    <Identifier>AmbientLight</Identifier>
+    <DisplayName>Ambient Light</DisplayName>
+    <Description>Estimated ambient illuminance in lux.</Description>
+    <Observable>Yes</Observable>
+    <DataType><Basic>Real</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>Proximity</Identifier>
+    <DisplayName>Proximity</DisplayName>
+    <Description>Raw reflected-infrared proximity count from 0 to 2047; higher values indicate a nearer target.</Description>
+    <Observable>Yes</Observable>
+    <DataType><Basic>Integer</Basic></DataType>
+  </Property>
+</Feature>

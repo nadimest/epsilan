@@ -2,11 +2,19 @@
 
 Native C firmware for running a compact SiLA 2 server on an M5Stack CoreS3.
 
-The firmware brings up the display and BMI270 accelerometer, publishes readings over USB at 2 Hz, and exposes them as a SiLA observable property over plaintext gRPC. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart.
+The firmware brings up the display and an onboard sensor panel: BMI270 acceleration and angular rate, LTR-553 ambient light and proximity, and AXP2101 battery telemetry. It publishes readings over USB at 2 Hz and exposes them as typed SiLA observable properties over plaintext gRPC. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart.
 
-The same property is available through the SiLA 2 server-initiated cloud connection over TLS. A compatible SiLA client can discover the board, fetch its feature definitions, and subscribe without carrying hand-written protobuf code.
+The same properties are available through the SiLA 2 server-initiated cloud connection over TLS. A compatible SiLA client can discover the board, fetch its feature definitions, and subscribe without carrying hand-written protobuf code.
 
 Use the full CoreS3. CoreS3 SE lacks the motion sensor. This build uses Espressif's CoreS3 BSP 3.0.0 and BMI270 driver 1.1.0, with transitive dependencies pinned in `firmware/dependencies.lock`. Different LCD revisions may require a newer BSP.
+
+## Built-in hardware worth exposing
+
+The full CoreS3 also includes a BMM150 magnetometer, GC0308 camera, capacitive touch,
+dual microphones, a 1 W speaker, BM8563 real-time clock, microSD slot, and controllable
+display backlight. The current instrument panel deliberately starts with small, cheap
+readings that can update continuously. Camera, audio, magnetic heading, and RTC-backed
+time are good candidates for later SiLA features rather than crowding this screen.
 
 Read [the longer engineering note](DEMO.md) for what this proves, where an ESP32 fits in lab automation, and which operational pieces still need work.
 
@@ -40,7 +48,7 @@ bash scripts/idf.sh -p "$PORT" flash
 .tools/idf-tools/python_env/idf5.4_py3.11_env/bin/python scripts/usb_console.py --port "$PORT" --seconds 5 --command 'backlight 30'
 ```
 
-The display should show acceleration in m/s², memory information, its IP address, and `SiLA :50052`. Tilt the device to change the gravity vector. `info` prints the persistent Epsilan UUID, memory, backlight, and cloud settings. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
+The display is a compact instrument panel with motion and rotation dials, ambient-light and proximity indicators, battery state, uptime, and link status. Tilt or turn the device, cover the optical sensor below the screen, or unplug it to see the gauges react. `info` prints the persistent Epsilan UUID, memory, backlight, and cloud settings. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
 
 On first boot the display shows a provisioning QR code, a `PROV_XXXXXX` BLE service name, and a proof-of-possession (PoP). In Espressif's [ESP BLE Provisioning app for iOS](https://apps.apple.com/us/app/esp-ble-provisioning/id1473590141) or [Android](https://play.google.com/store/apps/details?id=com.espressif.provble), scan the code, select a 2.4 GHz network, and enter its password. The QR content is provisioning data for that app, so a normal camera app is not expected to open it as a web page. The direct USB `wifi` command remains available for bench setup.
 
@@ -54,13 +62,16 @@ The server advertises `_sila._tcp.local` and currently implements:
 
 - `org.silastandard/core/SiLAService/v1`
 - `io.epsilan/sensors/Accelerometer/v1`
+- `io.epsilan/sensors/Gyroscope/v1`
+- `io.epsilan/sensors/OpticalSensor/v1`
+- `io.epsilan/device/PowerStatus/v1`
 - `io.epsilan/cloud/CloudConfiguration/v1`
 
 The `CloudConfiguration` feature exposes `SetCloudConnection` with endpoint, port, TLS, and enabled parameters, plus read-only properties for the saved values. A successful update persists to NVS and restarts the device after returning the RPC response.
 
 The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Disconnect the active client before opening another one; long-running observable streams remain open until the client cancels or disconnects.
 
-Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport now connects over TLS, handles unary commands and properties, streams acceleration to up to four subscribers, accepts cancellation, and reconnects with backoff. Cloud messages are capped at 2 KiB. Device enrollment and per-device authentication, observable commands, binary transfer, OTA management, secure boot, flash encryption, and eFuse changes are not implemented yet.
+Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport now connects over TLS, handles unary commands and properties, streams all exposed telemetry properties to up to twelve subscribers, accepts cancellation, and reconnects with backoff. Cloud messages are capped at 2 KiB. Device enrollment and per-device authentication, observable commands, binary transfer, OTA management, secure boot, flash encryption, and eFuse changes are not implemented yet.
 
 ## Restore this board's factory backup
 

@@ -2,7 +2,7 @@
 
 *A tiny hardware demo, plus a useful warning label for lab automation.*
 
-Pick up an M5Stack CoreS3. Flash it. Connect it to Wi-Fi. The 240 MHz microcontroller now advertises itself on the lab network as a SiLA server, publishes live data from its motion sensor, and opens an outbound TLS connection to a cloud SiLA endpoint.
+Pick up an M5Stack CoreS3. Flash it. Connect it to Wi-Fi. The 240 MHz microcontroller now advertises itself on the lab network as a SiLA server, publishes live data from its onboard sensors, and opens an outbound TLS connection to a cloud SiLA endpoint.
 
 That sentence sounds almost suspiciously easy. The code behind it is where the lesson lives.
 
@@ -12,15 +12,15 @@ Epsilan is native C firmware built on ESP-IDF 5.4.3. It turns an M5Stack CoreS3 
 
 The current build:
 
-- Reads the onboard BMI270 accelerometer twice per second and shows the values on the built-in display.
-- Exposes the same X, Y, and Z readings as a typed, observable SiLA property.
+- Reads onboard motion, optical, proximity, and power telemetry twice per second and shows it on an instrument-panel display.
+- Exposes acceleration, angular rate, ambient light, proximity, and power state as typed, observable SiLA properties.
 - Runs a local gRPC server on port 50052 and announces it through mDNS.
-- Implements `SiLAService`, `Accelerometer`, and `CloudConfiguration` features, including feature-definition retrieval.
+- Implements `SiLAService`, `Accelerometer`, `Gyroscope`, `OpticalSensor`, `PowerStatus`, and `CloudConfiguration`, including feature-definition retrieval.
 - Joins 2.4 GHz Wi-Fi through BLE provisioning and a QR code, with USB setup as a bench fallback.
 - Stores its UUID, Wi-Fi state, screen brightness, and cloud settings in nonvolatile storage.
-- Opens the SiLA 2 server-initiated cloud connection over HTTP/2 and TLS, handles cloud requests, streams acceleration, accepts cancellation, and reconnects with backoff.
+- Opens the SiLA 2 server-initiated cloud connection over HTTP/2 and TLS, handles cloud requests, streams every telemetry property, accepts cancellation, and reconnects with backoff.
 
-A generated Python facade can discover the board, inspect its feature definitions, and subscribe to acceleration without carrying hand-written protobuf code. Tilt the device, and the gravity vector moves in the client.
+A generated Python facade can discover the board, inspect its feature definitions, and subscribe without carrying hand-written protobuf code. Tilt the device, and the motion values move in the client; cover the optical sensor, and the proximity value reacts.
 
 The hardware is small, yet it has enough room for this experiment: 16 MB of flash, 8 MB of PSRAM, built-in Wi-Fi, a display, and several onboard sensors. Those figures come from the [CoreS3 hardware documentation](https://docs.m5stack.com/en/core/CoreS3).
 
@@ -36,7 +36,7 @@ And the form factor is hard to ignore. The server fits in your hand, boots quick
 
 This widens the range of hardware that can participate in a SiLA system. It also gives the lab automation community a concrete embedded implementation to inspect, measure, break, and improve.
 
-The demo stops at the onboard BMI270. Connecting a shaker or balance adds an electrical interface, a device-specific command set, timeouts, parsing, and recovery rules. SiLA gives the result a common shape. The instrument conversation still has to be written and tested.
+The demo stops at the CoreS3's onboard hardware. Connecting a shaker or balance adds an electrical interface, a device-specific command set, timeouts, parsing, and recovery rules. SiLA gives the result a common shape. The instrument conversation still has to be written and tested.
 
 ## Flashing takes one command
 
@@ -65,7 +65,7 @@ This prototype had to handle details that disappear inside a mature server kit:
 
 Every one of those items has failure modes. A half-read frame needs buffering. A dead socket needs a retry policy. A subscription needs a lifetime. A certificate check needs a usable clock. A command that moves hardware needs stronger retry semantics than a sensor read.
 
-The prototype deliberately keeps tight limits: 1 local TCP client, requests up to 512 bytes, 8 local HTTP/2 streams, cloud messages up to 2 KiB, and 4 cloud acceleration subscriptions. These limits make memory use easier to reason about. They also show how quickly a general server becomes a product of its own.
+The prototype deliberately keeps tight limits: 1 local TCP client, requests up to 512 bytes, 8 local HTTP/2 streams, cloud messages up to 2 KiB, and 12 cloud telemetry subscriptions. These limits make memory use easier to reason about. They also show how quickly a general server becomes a product of its own.
 
 Security and conformance work remains. The LAN endpoint currently uses plaintext gRPC. The cloud connection validates the gateway certificate, while device enrollment and per-device credentials still need a design. Secure boot, flash encryption, key provisioning, and a systematic SiLA conformance review belong on the production list.
 

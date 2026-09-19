@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/usb_serial_jtag.h"
@@ -24,15 +25,17 @@
 #include "bmi270.h"
 #include "cloud_client.h"
 #include "cloud_config.h"
+#include "dashboard.h"
 #include "lvgl.h"
+#include "onboard_sensors.h"
 #include "sila_server.h"
 
 static const char *TAG = "epsilan";
-static lv_obj_t *readings;
 static lv_obj_t *status;
 static lv_obj_t *setup_qr;
 static lv_obj_t *setup_details;
 static lv_obj_t *setup_button;
+static dashboard_t dashboard;
 static unsigned brightness = 60;
 static char server_uuid[37];
 static char network_status[128] = "Wi-Fi starting...";
@@ -40,7 +43,9 @@ static char setup_name[16];
 static char setup_pop[16];
 static epsilan_cloud_config_t cloud_config;
 static bool wifi_ready;
+static bool wifi_connected;
 static bool provisioning_active;
+static bool runtime_screen_active;
 static volatile bool setup_requested;
 static volatile bool runtime_screen_requested;
 
@@ -121,27 +126,14 @@ static esp_err_t mark_epsilan_wifi_configured(void)
 
 static void show_runtime_screen(void)
 {
-    if (readings) return;
+    if (runtime_screen_active) return;
     lv_obj_t *screen = lv_scr_act();
-    lv_obj_clean(screen);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x101b27), 0);
-    lv_obj_set_style_text_color(screen, lv_color_hex(0xe5eff9), 0);
-    lv_obj_t *title = lv_label_create(screen);
-    lv_label_set_text(title, "EPSILAN / C firmware");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 12);
-    readings = lv_label_create(screen);
-    lv_obj_align(readings, LV_ALIGN_TOP_LEFT, 16, 46);
-    status = lv_label_create(screen);
-    lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 16, -12);
-    setup_button = lv_button_create(screen);
-    lv_obj_set_size(setup_button, 132, 30);
-    lv_obj_align(setup_button, LV_ALIGN_TOP_RIGHT, -12, 8);
-    lv_obj_t *label = lv_label_create(setup_button);
-    lv_label_set_text(label, "Hold: reset Wi-Fi");
-    lv_obj_center(label);
-    lv_obj_add_event_cb(setup_button, setup_button_event, LV_EVENT_LONG_PRESSED, NULL);
+    dashboard_create(&dashboard, screen, setup_button_event);
+    status = dashboard.status;
+    setup_button = dashboard.setup_button;
     setup_qr = NULL;
     setup_details = NULL;
+    runtime_screen_active = true;
 }
 
 static void show_setup_screen(void)
@@ -172,8 +164,9 @@ static void show_setup_screen(void)
     status = lv_label_create(screen);
     lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 14, -8);
     lv_label_set_text(status, network_status);
-    readings = NULL;
     setup_button = NULL;
+    memset(&dashboard, 0, sizeof(dashboard));
+    runtime_screen_active = false;
 }
 
 static void setup_button_event(lv_event_t *event)
@@ -202,12 +195,15 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START && !provisioning_active) {
         esp_wifi_connect();
+        wifi_connected = false;
         set_network_status("Wi-Fi connecting...");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED && !provisioning_active) {
         esp_wifi_connect();
+        wifi_connected = false;
         set_network_status("Wi-Fi reconnecting...");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = event_data;
+        wifi_connected = true;
         snprintf(network_status, sizeof(network_status), "Wi-Fi " IPSTR " / SiLA :%d",
                  IP2STR(&event->ip_info.ip), EPSILAN_SILA_PORT);
         ESP_LOGI(TAG, "Wi-Fi connected: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -334,8 +330,8 @@ void app_main(void)
     ESP_ERROR_CHECK(bsp_display_brightness_set((int)brightness));
     bsp_display_lock(0);
     show_runtime_screen();
-    lv_label_set_text(readings, "Starting motion sensor...");
-    lv_label_set_text(status, "USB connected / SiLA next");
+    dashboard_reading_t starting = { 0 };
+    dashboard_update(&dashboard, &starting, "Starting sensors...");
     bsp_display_unlock();
 
     bmi270_handle_t *imu = NULL;
@@ -354,6 +350,10 @@ void app_main(void)
         imu_err = bmi270_start(imu, &config);
     }
     ESP_LOGI(TAG, "IMU initialization: %s", esp_err_to_name(imu_err));
+
+    onboard_sensors_t onboard_sensors;
+    esp_err_t onboard_err = onboard_sensors_init(&onboard_sensors, i2c_bus);
+    ESP_LOGI(TAG, "Onboard sensor initialization: %s", esp_err_to_name(onboard_err));
     esp_err_t wifi_err = initialize_wifi();
     if (wifi_err != ESP_OK) {
         set_network_status("Wi-Fi startup failed");
@@ -404,28 +404,64 @@ void app_main(void)
         }
 
         float ax = 0, ay = 0, az = 0;
+        float gx = 0, gy = 0, gz = 0;
         esp_err_t sample_err = imu_err;
-        if (imu_err == ESP_OK) sample_err = bmi270_get_acce_data(imu, &ax, &ay, &az);
+        if (imu_err == ESP_OK) {
+            sample_err = bmi270_get_acce_data(imu, &ax, &ay, &az);
+            if (sample_err == ESP_OK) sample_err = bmi270_get_gyro_data(imu, &gx, &gy, &gz);
+        }
+        onboard_sensor_reading_t onboard_reading;
+        onboard_sensors_read(&onboard_sensors, &onboard_reading);
         unsigned free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         int64_t uptime = esp_timer_get_time() / 1000000;
         if (sample_err == ESP_OK) {
             ax *= 9.80665f; ay *= 9.80665f; az *= 9.80665f;
-            sila_server_set_acceleration(ax, ay, az);
-            ESP_LOGI(TAG, "SAMPLE seq=%" PRIu32 " ax=%.3f ay=%.3f az=%.3f m/s2 internal_free=%u",
-                     sequence++, ax, ay, az, free_internal);
+            ESP_LOGI(TAG, "SAMPLE seq=%" PRIu32 " accel=[%.3f %.3f %.3f]m/s2 gyro=[%.1f %.1f %.1f]dps light=%.1flux proximity=%u battery=%u%% internal_free=%u",
+                     sequence++, ax, ay, az, gx, gy, gz,
+                     onboard_reading.optical_valid ? onboard_reading.ambient_lux : -1.0f,
+                     onboard_reading.proximity_raw,
+                     onboard_reading.battery_valid ? onboard_reading.battery_percent : 0,
+                     free_internal);
         } else {
             ESP_LOGW(TAG, "SAMPLE unavailable: %s", esp_err_to_name(sample_err));
         }
+        const epsilan_telemetry_t telemetry = {
+            .acceleration_x = ax,
+            .acceleration_y = ay,
+            .acceleration_z = az,
+            .angular_rate_x = gx,
+            .angular_rate_y = gy,
+            .angular_rate_z = gz,
+            .ambient_lux = onboard_reading.ambient_lux,
+            .proximity_raw = onboard_reading.proximity_raw,
+            .battery_mv = onboard_reading.battery_mv,
+            .battery_percent = onboard_reading.battery_percent,
+            .battery_present = onboard_reading.battery_present,
+            .external_power = onboard_reading.external_power,
+            .charging = onboard_reading.charging,
+        };
+        sila_server_set_telemetry(&telemetry);
         bsp_display_lock(0);
         if (provisioning_active) {
             if (status) lv_label_set_text(status, network_status);
         } else {
-            if (sample_err == ESP_OK) {
-                lv_label_set_text_fmt(readings, "Acceleration (m/s2)\n\nX  % .3f\nY  % .3f\nZ  % .3f", ax, ay, az);
-            } else {
-                lv_label_set_text_fmt(readings, "Motion sensor unavailable\n%s", esp_err_to_name(sample_err));
-            }
-            lv_label_set_text_fmt(status, "Up %" PRId64 "s / heap %u KiB\n%s", uptime, free_internal / 1024, network_status);
+            dashboard_reading_t panel = {
+                .acceleration_ms2 = sqrtf(ax * ax + ay * ay + az * az),
+                .angular_rate_dps = sqrtf(gx * gx + gy * gy + gz * gz),
+                .ambient_lux = onboard_reading.ambient_lux,
+                .proximity_raw = onboard_reading.proximity_raw,
+                .battery_mv = onboard_reading.battery_mv,
+                .battery_percent = onboard_reading.battery_percent,
+                .uptime_seconds = uptime,
+                .motion_valid = sample_err == ESP_OK,
+                .optical_valid = onboard_reading.optical_valid,
+                .battery_valid = onboard_reading.battery_valid,
+                .charging = onboard_reading.charging,
+                .battery_present = onboard_reading.battery_present,
+                .external_power = onboard_reading.external_power,
+                .wifi_connected = wifi_connected,
+            };
+            dashboard_update(&dashboard, &panel, network_status);
         }
         bsp_display_unlock();
         vTaskDelay(pdMS_TO_TICKS(500));

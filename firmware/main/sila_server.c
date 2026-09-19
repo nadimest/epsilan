@@ -19,7 +19,7 @@
 #include "nghttp2/nghttp2.h"
 
 #define MAX_REQUEST_BYTES 512
-#define ACCELERATION_INTERVAL_US 500000
+#define TELEMETRY_INTERVAL_US 500000
 #define SERVER_NAME_MAX 96
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define NV(NAME, VALUE) {                                                    \
@@ -30,6 +30,9 @@
 static const char *TAG = "epsilan_sila";
 static const char *CORE_FQI = "org.silastandard/core/SiLAService/v1";
 static const char *ACCEL_FQI = "io.epsilan/sensors/Accelerometer/v1";
+static const char *GYRO_FQI = "io.epsilan/sensors/Gyroscope/v1";
+static const char *OPTICAL_FQI = "io.epsilan/sensors/OpticalSensor/v1";
+static const char *POWER_FQI = "io.epsilan/device/PowerStatus/v1";
 static const char *CLOUD_FQI = "io.epsilan/cloud/CloudConfiguration/v1";
 static const char *CORE_PATH = "/sila2.org.silastandard.core.silaservice.v1.SiLAService/";
 static const char *CLOUD_PATH = "/sila2.io.epsilan.cloud.cloudconfiguration.v1.CloudConfiguration/";
@@ -39,6 +42,12 @@ extern const uint8_t sila_service_xml_start[] asm("_binary_SiLAService_sila_xml_
 extern const uint8_t sila_service_xml_end[] asm("_binary_SiLAService_sila_xml_end");
 extern const uint8_t accelerometer_xml_start[] asm("_binary_Accelerometer_sila_xml_start");
 extern const uint8_t accelerometer_xml_end[] asm("_binary_Accelerometer_sila_xml_end");
+extern const uint8_t gyroscope_xml_start[] asm("_binary_Gyroscope_sila_xml_start");
+extern const uint8_t gyroscope_xml_end[] asm("_binary_Gyroscope_sila_xml_end");
+extern const uint8_t optical_sensor_xml_start[] asm("_binary_OpticalSensor_sila_xml_start");
+extern const uint8_t optical_sensor_xml_end[] asm("_binary_OpticalSensor_sila_xml_end");
+extern const uint8_t power_status_xml_start[] asm("_binary_PowerStatus_sila_xml_start");
+extern const uint8_t power_status_xml_end[] asm("_binary_PowerStatus_sila_xml_end");
 extern const uint8_t cloud_configuration_xml_start[] asm("_binary_CloudConfiguration_sila_xml_start");
 extern const uint8_t cloud_configuration_xml_end[] asm("_binary_CloudConfiguration_sila_xml_end");
 
@@ -51,7 +60,7 @@ typedef struct stream_state {
     uint8_t *response;
     size_t response_len;
     size_t response_offset;
-    bool observable;
+    epsilan_property_t observable_property;
     bool trailer_submitted;
     int grpc_status;
     int64_t next_publish_us;
@@ -66,10 +75,8 @@ typedef struct {
 static bool task_started;
 static char device_uuid[37];
 static char server_name[SERVER_NAME_MAX] = "Epsilan CoreS3";
-static portMUX_TYPE acceleration_lock = portMUX_INITIALIZER_UNLOCKED;
-static float acceleration_x;
-static float acceleration_y;
-static float acceleration_z;
+static portMUX_TYPE telemetry_lock = portMUX_INITIALIZER_UNLOCKED;
+static epsilan_telemetry_t current_telemetry;
 
 static size_t varint_size(size_t value)
 {
@@ -220,7 +227,9 @@ static void restart_after_configuration(void)
 
 static uint8_t *implemented_features(size_t *out_length)
 {
-    const char *features[] = { CORE_FQI, ACCEL_FQI, CLOUD_FQI };
+    const char *features[] = {
+        CORE_FQI, ACCEL_FQI, GYRO_FQI, OPTICAL_FQI, POWER_FQI, CLOUD_FQI
+    };
     size_t total = 0;
     for (size_t i = 0; i < ARRAY_SIZE(features); ++i) {
         size_t text_length = strlen(features[i]);
@@ -244,17 +253,24 @@ static uint8_t *implemented_features(size_t *out_length)
     return message;
 }
 
-uint8_t *sila_server_acceleration_value(size_t *out_length)
+static uint8_t *wrap_real(double value, size_t *out_length)
 {
-    float x;
-    float y;
-    float z;
-    taskENTER_CRITICAL(&acceleration_lock);
-    x = acceleration_x;
-    y = acceleration_y;
-    z = acceleration_z;
-    taskEXIT_CRITICAL(&acceleration_lock);
+    const size_t message_length = 11;
+    uint8_t *message = malloc(message_length);
+    if (!message) return NULL;
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    uint8_t *out = message;
+    *out++ = 0x0a;
+    *out++ = 9;
+    *out++ = 0x09;
+    for (unsigned byte = 0; byte < 8; ++byte) *out++ = (uint8_t)(bits >> (byte * 8));
+    *out_length = message_length;
+    return message;
+}
 
+static uint8_t *wrap_vector(double x, double y, double z, size_t *out_length)
+{
     const double values[] = { x, y, z };
     const size_t structure_length = 3 * 11;
     const size_t message_length = 2 + structure_length;
@@ -275,6 +291,39 @@ uint8_t *sila_server_acceleration_value(size_t *out_length)
     }
     *out_length = message_length;
     return message;
+}
+
+uint8_t *sila_server_property_value(epsilan_property_t property, size_t *out_length)
+{
+    epsilan_telemetry_t value;
+    taskENTER_CRITICAL(&telemetry_lock);
+    value = current_telemetry;
+    taskEXIT_CRITICAL(&telemetry_lock);
+
+    switch (property) {
+    case EPSILAN_PROPERTY_ACCELERATION:
+        return wrap_vector(value.acceleration_x, value.acceleration_y,
+                           value.acceleration_z, out_length);
+    case EPSILAN_PROPERTY_ANGULAR_RATE:
+        return wrap_vector(value.angular_rate_x, value.angular_rate_y,
+                           value.angular_rate_z, out_length);
+    case EPSILAN_PROPERTY_AMBIENT_LIGHT:
+        return wrap_real(value.ambient_lux, out_length);
+    case EPSILAN_PROPERTY_PROXIMITY:
+        return wrap_varint(value.proximity_raw, out_length);
+    case EPSILAN_PROPERTY_BATTERY_LEVEL:
+        return wrap_varint(value.battery_percent, out_length);
+    case EPSILAN_PROPERTY_BATTERY_VOLTAGE:
+        return wrap_real(value.battery_mv / 1000.0, out_length);
+    case EPSILAN_PROPERTY_BATTERY_PRESENT:
+        return wrap_varint(value.battery_present, out_length);
+    case EPSILAN_PROPERTY_EXTERNAL_POWER:
+        return wrap_varint(value.external_power, out_length);
+    case EPSILAN_PROPERTY_CHARGING:
+        return wrap_varint(value.charging, out_length);
+    default:
+        return NULL;
+    }
 }
 
 static bool grpc_request_message(const stream_state_t *stream,
@@ -378,6 +427,15 @@ static bool prepare_unary_response(stream_state_t *stream)
                 } else if (identifier_length == strlen(ACCEL_FQI) && !memcmp(identifier, ACCEL_FQI, identifier_length)) {
                     xml_start = accelerometer_xml_start;
                     xml_end = accelerometer_xml_end;
+                } else if (identifier_length == strlen(GYRO_FQI) && !memcmp(identifier, GYRO_FQI, identifier_length)) {
+                    xml_start = gyroscope_xml_start;
+                    xml_end = gyroscope_xml_end;
+                } else if (identifier_length == strlen(OPTICAL_FQI) && !memcmp(identifier, OPTICAL_FQI, identifier_length)) {
+                    xml_start = optical_sensor_xml_start;
+                    xml_end = optical_sensor_xml_end;
+                } else if (identifier_length == strlen(POWER_FQI) && !memcmp(identifier, POWER_FQI, identifier_length)) {
+                    xml_start = power_status_xml_start;
+                    xml_end = power_status_xml_end;
                 } else if (identifier_length == strlen(CLOUD_FQI) && !memcmp(identifier, CLOUD_FQI, identifier_length)) {
                     xml_start = cloud_configuration_xml_start;
                     xml_end = cloud_configuration_xml_end;
@@ -454,10 +512,29 @@ static bool prepare_unary_response(stream_state_t *stream)
                 protobuf = calloc(1, 1);
             }
         }
-    } else if (!strcmp(method, "/sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer/Subscribe_Acceleration")) {
-        stream->observable = true;
-        stream->next_publish_us = 0;
-        protobuf = sila_server_acceleration_value(&protobuf_length);
+    } else {
+        static const struct {
+            const char *path;
+            epsilan_property_t property;
+        } observable_paths[] = {
+            { "/sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer/Subscribe_Acceleration", EPSILAN_PROPERTY_ACCELERATION },
+            { "/sila2.io.epsilan.sensors.gyroscope.v1.Gyroscope/Subscribe_AngularRate", EPSILAN_PROPERTY_ANGULAR_RATE },
+            { "/sila2.io.epsilan.sensors.opticalsensor.v1.OpticalSensor/Subscribe_AmbientLight", EPSILAN_PROPERTY_AMBIENT_LIGHT },
+            { "/sila2.io.epsilan.sensors.opticalsensor.v1.OpticalSensor/Subscribe_Proximity", EPSILAN_PROPERTY_PROXIMITY },
+            { "/sila2.io.epsilan.device.powerstatus.v1.PowerStatus/Subscribe_BatteryLevel", EPSILAN_PROPERTY_BATTERY_LEVEL },
+            { "/sila2.io.epsilan.device.powerstatus.v1.PowerStatus/Subscribe_BatteryVoltage", EPSILAN_PROPERTY_BATTERY_VOLTAGE },
+            { "/sila2.io.epsilan.device.powerstatus.v1.PowerStatus/Subscribe_BatteryPresent", EPSILAN_PROPERTY_BATTERY_PRESENT },
+            { "/sila2.io.epsilan.device.powerstatus.v1.PowerStatus/Subscribe_ExternalPower", EPSILAN_PROPERTY_EXTERNAL_POWER },
+            { "/sila2.io.epsilan.device.powerstatus.v1.PowerStatus/Subscribe_Charging", EPSILAN_PROPERTY_CHARGING },
+        };
+        for (size_t i = 0; i < ARRAY_SIZE(observable_paths); ++i) {
+            if (!strcmp(method, observable_paths[i].path)) {
+                stream->observable_property = observable_paths[i].property;
+                stream->next_publish_us = 0;
+                protobuf = sila_server_property_value(stream->observable_property, &protobuf_length);
+                break;
+            }
+        }
     }
 
     if (!protobuf && protobuf_length == 0) {
@@ -487,6 +564,18 @@ bool sila_server_cloud_unary_call(const char *fqi, bool is_property,
                fqi[strlen(ACCEL_FQI)] == '/') {
         feature = ACCEL_FQI;
         service = "sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer";
+    } else if (!strncmp(fqi, GYRO_FQI, strlen(GYRO_FQI)) &&
+               fqi[strlen(GYRO_FQI)] == '/') {
+        feature = GYRO_FQI;
+        service = "sila2.io.epsilan.sensors.gyroscope.v1.Gyroscope";
+    } else if (!strncmp(fqi, OPTICAL_FQI, strlen(OPTICAL_FQI)) &&
+               fqi[strlen(OPTICAL_FQI)] == '/') {
+        feature = OPTICAL_FQI;
+        service = "sila2.io.epsilan.sensors.opticalsensor.v1.OpticalSensor";
+    } else if (!strncmp(fqi, POWER_FQI, strlen(POWER_FQI)) &&
+               fqi[strlen(POWER_FQI)] == '/') {
+        feature = POWER_FQI;
+        service = "sila2.io.epsilan.device.powerstatus.v1.PowerStatus";
     } else if (!strncmp(fqi, CLOUD_FQI, strlen(CLOUD_FQI)) &&
                fqi[strlen(CLOUD_FQI)] == '/') {
         feature = CLOUD_FQI;
@@ -565,10 +654,11 @@ static nghttp2_ssize response_read_callback(nghttp2_session *session, int32_t st
     (void)user_data;
     stream_state_t *stream = source->ptr;
 
-    if (stream->observable && stream->response_offset == stream->response_len) {
+    if (stream->observable_property != EPSILAN_PROPERTY_NONE &&
+        stream->response_offset == stream->response_len) {
         if (esp_timer_get_time() < stream->next_publish_us) return NGHTTP2_ERR_DEFERRED;
         size_t protobuf_length;
-        uint8_t *protobuf = sila_server_acceleration_value(&protobuf_length);
+        uint8_t *protobuf = sila_server_property_value(stream->observable_property, &protobuf_length);
         if (!protobuf || !set_grpc_response(stream, protobuf, protobuf_length)) {
             return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
         }
@@ -582,8 +672,8 @@ static nghttp2_ssize response_read_callback(nghttp2_session *session, int32_t st
     }
 
     if (stream->response_offset == stream->response_len) {
-        if (stream->observable) {
-            stream->next_publish_us = esp_timer_get_time() + ACCELERATION_INTERVAL_US;
+        if (stream->observable_property != EPSILAN_PROPERTY_NONE) {
+            stream->next_publish_us = esp_timer_get_time() + TELEMETRY_INTERVAL_US;
         } else {
             *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
             if (!stream->trailer_submitted) {
@@ -701,7 +791,8 @@ static void resume_observables(connection_t *connection)
 {
     int64_t now = esp_timer_get_time();
     for (stream_state_t *stream = connection->streams; stream; stream = stream->next) {
-        if (stream->observable && stream->response_offset == stream->response_len &&
+        if (stream->observable_property != EPSILAN_PROPERTY_NONE &&
+            stream->response_offset == stream->response_len &&
             now >= stream->next_publish_us) {
             nghttp2_session_resume_data(connection->session, stream->id);
         }
@@ -840,12 +931,11 @@ esp_err_t sila_server_start(const char *server_uuid)
     return ESP_OK;
 }
 
-void sila_server_set_acceleration(float x, float y, float z)
+void sila_server_set_telemetry(const epsilan_telemetry_t *telemetry)
 {
-    taskENTER_CRITICAL(&acceleration_lock);
-    acceleration_x = x;
-    acceleration_y = y;
-    acceleration_z = z;
-    taskEXIT_CRITICAL(&acceleration_lock);
-    epsilan_cloud_client_publish_acceleration(x, y, z);
+    if (!telemetry) return;
+    taskENTER_CRITICAL(&telemetry_lock);
+    current_telemetry = *telemetry;
+    taskEXIT_CRITICAL(&telemetry_lock);
+    epsilan_cloud_client_publish_telemetry();
 }

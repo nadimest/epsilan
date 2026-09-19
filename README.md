@@ -4,7 +4,7 @@ Native C firmware for running a compact SiLA 2 server on an M5Stack CoreS3.
 
 The firmware brings up the display and BMI270 accelerometer, publishes readings over USB at 2 Hz, and exposes them as a SiLA observable property over plaintext gRPC. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart.
 
-The same property is available through the SiLA 2 server-initiated cloud connection over TLS. A generated Python client can discover the board, fetch its feature definitions, and subscribe without carrying hand-written protobuf code.
+The same property is available through the SiLA 2 server-initiated cloud connection over TLS. A compatible SiLA client can discover the board, fetch its feature definitions, and subscribe without carrying hand-written protobuf code.
 
 Use the full CoreS3. CoreS3 SE lacks the motion sensor. This build uses Espressif's CoreS3 BSP 3.0.0 and BMI270 driver 1.1.0, with transitive dependencies pinned in `firmware/dependencies.lock`. Different LCD revisions may require a newer BSP.
 
@@ -46,7 +46,9 @@ On first boot the display shows a provisioning QR code, a `PROV_XXXXXX` BLE serv
 
 Provisioning state and Wi-Fi credentials survive restart. On the main screen, press and hold **Reset Wi-Fi** to erase the saved network and return to provisioning; a normal tap does not reset it. Setup secrets are random per board and stored in NVS. The minimum brightness is deliberately above zero for bring-up. The USB command interface remains available independently of the network SiLA endpoint.
 
-## Browse and generate a Python connector
+## Test the SiLA server
+
+Use the public [UniteLabs SiLA Browser](https://gitlab.com/unitelabs/sila2/sila-browser) to scan the local network, open the CoreS3 server, inspect its features, read the current acceleration, and subscribe to the observable acceleration stream.
 
 The server advertises `_sila._tcp.local` and currently implements:
 
@@ -56,40 +58,7 @@ The server advertises `_sila._tcp.local` and currently implements:
 
 The `CloudConfiguration` feature exposes `SetCloudConnection` with endpoint, port, TLS, and enabled parameters, plus read-only properties for the saved values. A successful update persists to NVS and restarts the device after returning the RPC response.
 
-Using Labplane's `unitelabs-sila` integration:
-
-```sh
-cd /path/to/labplane
-uv run sila-codegen discover --timeout 5
-uv run sila-codegen generate DEVICE_IP:50052 \
-  --name EpsilanCoreS3 \
-  --output /tmp/epsilan_core_s3.py
-```
-
-The generated facade can subscribe to the onboard sensor without knowing its protobuf schema:
-
-```python
-import asyncio
-
-from epsilan_core_s3 import EpsilanCoreS3
-
-
-async def main() -> None:
-    async with await EpsilanCoreS3.connect(
-        "DEVICE_IP:50052", timeout=8_000
-    ) as device:
-        samples = await device.accelerometer.subscribe_acceleration(timeout=4_000)
-        try:
-            async for sample in samples:
-                print(sample)  # {'X': ..., 'Y': ..., 'Z': ...}
-        finally:
-            samples.close()
-
-
-asyncio.run(main())
-```
-
-Timeouts passed to `unitelabs-sila` are milliseconds. The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close a browser or generated connector before opening the next client; long-running observable streams remain open until the client cancels or disconnects.
+The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close the browser before opening another client; long-running observable streams remain open until the client cancels or disconnects.
 
 Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport now connects over TLS, handles unary commands and properties, streams acceleration to up to four subscribers, accepts cancellation, and reconnects with backoff. Cloud messages are capped at 2 KiB. Device enrollment and per-device authentication, observable commands, binary transfer, OTA management, secure boot, flash encryption, and eFuse changes are not implemented yet.
 

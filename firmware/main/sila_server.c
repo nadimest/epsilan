@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "cloud_config.h"
+#include "cloud_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
@@ -243,7 +244,7 @@ static uint8_t *implemented_features(size_t *out_length)
     return message;
 }
 
-static uint8_t *acceleration_response(size_t *out_length)
+uint8_t *sila_server_acceleration_value(size_t *out_length)
 {
     float x;
     float y;
@@ -456,7 +457,7 @@ static bool prepare_unary_response(stream_state_t *stream)
     } else if (!strcmp(method, "/sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer/Subscribe_Acceleration")) {
         stream->observable = true;
         stream->next_publish_us = 0;
-        protobuf = acceleration_response(&protobuf_length);
+        protobuf = sila_server_acceleration_value(&protobuf_length);
     }
 
     if (!protobuf && protobuf_length == 0) {
@@ -567,7 +568,7 @@ static nghttp2_ssize response_read_callback(nghttp2_session *session, int32_t st
     if (stream->observable && stream->response_offset == stream->response_len) {
         if (esp_timer_get_time() < stream->next_publish_us) return NGHTTP2_ERR_DEFERRED;
         size_t protobuf_length;
-        uint8_t *protobuf = acceleration_response(&protobuf_length);
+        uint8_t *protobuf = sila_server_acceleration_value(&protobuf_length);
         if (!protobuf || !set_grpc_response(stream, protobuf, protobuf_length)) {
             return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
         }
@@ -846,4 +847,5 @@ void sila_server_set_acceleration(float x, float y, float z)
     acceleration_y = y;
     acceleration_z = z;
     taskEXIT_CRITICAL(&acceleration_lock);
+    epsilan_cloud_client_publish_acceleration(x, y, z);
 }

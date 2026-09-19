@@ -11,6 +11,9 @@
 esp_err_t sila_server_start(const char *server_uuid);
 void sila_server_set_acceleration(float x, float y, float z);
 
+/** Returns the current Acceleration property protobuf payload; caller frees it. */
+uint8_t *sila_server_acceleration_value(size_t *out_length);
+
 /**
  * Dispatches one unobservable SiLA Cloud call through the same implementation
  * used by the LAN gRPC server.  The returned payload is the unframed protobuf

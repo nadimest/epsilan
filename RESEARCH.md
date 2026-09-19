@@ -15,16 +15,16 @@ Research date: 16 September 2026. Status: feasibility assessment and proposed ar
 
 **What Silaphone already gives us**
 
-I inspected the local source under `/Users/nadim/Repos/nadim/Silaphone`, including the cloud transport, envelope codec, dispatcher, call registry, sensor definitions, and cloud tests.
+I inspected a local checkout of Silaphone, including the cloud transport, envelope codec, dispatcher, call registry, sensor definitions, and cloud tests.
 
 | Existing implementation | Useful design to retain |
 |---|---|
-| [CloudConnection.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/main/java/com/silaphone/sila/cloud/CloudConnection.kt) | One outbound bidirectional RPC, TLS configuration, reconnection with backoff |
-| [CloudProto.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/main/java/com/silaphone/sila/cloud/CloudProto.kt) | Request UUIDs, envelope variants, nested feature payloads |
-| [CloudRouter.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/main/java/com/silaphone/sila/cloud/CloudRouter.kt) | Routing by fully qualified identifiers; subscriptions and cancellation |
-| [SilaCallRegistry.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/main/java/com/silaphone/sila/SilaCallRegistry.kt) | A common handler registry shared by local and cloud transports |
-| [SensorFeature.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/main/java/com/silaphone/sila/SensorFeature.kt) | FDL definitions, types, units, and observable-property shapes |
-| [CloudConnectionE2eTest.kt](/Users/nadim/Repos/nadim/Silaphone/app/src/test/java/com/silaphone/sila/cloud/CloudConnectionE2eTest.kt) | A useful fake-gateway scenario for reads, commands, and reconnection |
+| `CloudConnection.kt` | One outbound bidirectional RPC, TLS configuration, reconnection with backoff |
+| `CloudProto.kt` | Request UUIDs, envelope variants, nested feature payloads |
+| `CloudRouter.kt` | Routing by fully qualified identifiers; subscriptions and cancellation |
+| `SilaCallRegistry.kt` | A common handler registry shared by local and cloud transports |
+| `SensorFeature.kt` | FDL definitions, types, units, and observable-property shapes |
+| `CloudConnectionE2eTest.kt` | A useful fake-gateway scenario for reads, commands, and reconnection |
 
 The cloud router currently handles unobservable commands, unobservable property reads, observable property subscriptions, and cancellation. It explicitly rejects observable commands and binary transfer. That makes it a useful bounded starting point, but printing jobs will eventually need richer command handling. It also ignores incoming command metadata; an embedded implementation should validate metadata according to its supported features instead of inheriting this shortcut.
 

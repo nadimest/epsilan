@@ -4,7 +4,19 @@ Native C firmware for running a compact SiLA 2 server on an M5Stack CoreS3.
 
 The firmware brings up the display and BMI270 accelerometer, publishes readings over USB at 2 Hz, and exposes them as a SiLA observable property over plaintext gRPC. It creates and persists an Epsilan server UUID and the selected backlight setting in NVS. On an unconfigured board it starts secure BLE Wi-Fi provisioning compatible with Espressif's official app; once joined, it reconnects automatically after a restart.
 
+The same property is available through the SiLA 2 server-initiated cloud connection over TLS. A generated Python client can discover the board, fetch its feature definitions, and subscribe without carrying hand-written protobuf code.
+
 Use the full CoreS3. CoreS3 SE lacks the motion sensor. This build uses Espressif's CoreS3 BSP 3.0.0 and BMI270 driver 1.1.0, with transitive dependencies pinned in `firmware/dependencies.lock`. Different LCD revisions may require a newer BSP.
+
+Read [the longer engineering note](DEMO.md) for what this proves, where an ESP32 fits in lab automation, and which operational pieces still need work.
+
+## Where this fits
+
+An ESP32 is credible for months of continuous operation when power, watchdogs, failure states, and firmware updates are engineered deliberately. It fits custom instruments and bioreactors where local sensing and control must continue through a network outage.
+
+Linux buys a mature driver environment, persistent logs, remote shell access, and the full Python SiLA development stack. That can lower development and support costs for one-off serial or USB connectors.
+
+For a bioreactor, keep time-sensitive control and safe output states local. SiLA can expose setpoints, readings, alarms, and operations to supervisory systems while the device keeps running on its own.
 
 ## Build on macOS
 
@@ -79,7 +91,7 @@ asyncio.run(main())
 
 Timeouts passed to `unitelabs-sila` are milliseconds. The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close a browser or generated connector before opening the next client; long-running observable streams remain open until the client cancels or disconnects.
 
-Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport, TLS handshake, OTA management, and eFuse changes are not implemented yet.
+Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport now connects over TLS, handles unary commands and properties, streams acceleration to up to four subscribers, accepts cancellation, and reconnects with backoff. Cloud messages are capped at 2 KiB. Device enrollment and per-device authentication, observable commands, binary transfer, OTA management, secure boot, flash encryption, and eFuse changes are not implemented yet.
 
 ## Restore this board's factory backup
 

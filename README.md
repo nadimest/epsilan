@@ -28,7 +28,7 @@ bash scripts/idf.sh -p "$PORT" flash
 .tools/idf-tools/python_env/idf5.4_py3.11_env/bin/python scripts/usb_console.py --port "$PORT" --seconds 5 --command 'backlight 30'
 ```
 
-The display should show acceleration in m/s², memory information, its IP address, and `SiLA :50052`. Tilt the device to change the gravity vector. `info` prints the persistent Epsilan UUID, memory, and backlight setting. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
+The display should show acceleration in m/s², memory information, its IP address, and `SiLA :50052`. Tilt the device to change the gravity vector. `info` prints the persistent Epsilan UUID, memory, backlight, and cloud settings. Commands are newline terminated: `info`, `backlight 1..100`, and `wifi <ssid-without-spaces> <password>`.
 
 On first boot the display shows a provisioning QR code, a `PROV_XXXXXX` BLE service name, and a proof-of-possession (PoP). In Espressif's [ESP BLE Provisioning app for iOS](https://apps.apple.com/us/app/esp-ble-provisioning/id1473590141) or [Android](https://play.google.com/store/apps/details?id=com.espressif.provble), scan the code, select a 2.4 GHz network, and enter its password. The QR content is provisioning data for that app, so a normal camera app is not expected to open it as a web page. The direct USB `wifi` command remains available for bench setup.
 
@@ -40,6 +40,9 @@ The server advertises `_sila._tcp.local` and currently implements:
 
 - `org.silastandard/core/SiLAService/v1`
 - `io.epsilan/sensors/Accelerometer/v1`
+- `io.epsilan/cloud/CloudConfiguration/v1`
+
+The `CloudConfiguration` feature exposes `SetCloudConnection` with endpoint, port, TLS, and enabled parameters, plus read-only properties for the saved values. A successful update persists to NVS and restarts the device after returning the RPC response.
 
 Using Labplane's `unitelabs-sila` integration:
 
@@ -76,7 +79,7 @@ asyncio.run(main())
 
 Timeouts passed to `unitelabs-sila` are milliseconds. The current native server is a deliberately small first implementation: plaintext only, one active TCP client at a time, a 512-byte request limit, and up to eight concurrent HTTP/2 streams. Close a browser or generated connector before opening the next client; long-running observable streams remain open until the client cancels or disconnects.
 
-Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. Cloud connectivity, TLS, OTA management, and eFuse changes are not implemented yet.
+Two 4 MiB application partitions reserve space for future OTA. This does not enable OTA by itself. The remaining flash is unassigned. The outbound SiLA 2 v1.1 cloud transport, TLS handshake, OTA management, and eFuse changes are not implemented yet.
 
 ## Restore this board's factory backup
 

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Feature SiLA2Version="1.1" FeatureVersion="1.0" MaturityLevel="Draft" Originator="io.epsilan" Category="cloud"
+         xmlns="http://www.sila-standard.org"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.sila-standard.org https://gitlab.com/SiLA2/sila_base/raw/master/schema/FeatureDefinition.xsd">
+  <Identifier>CloudConfiguration</Identifier>
+  <DisplayName>Cloud Configuration</DisplayName>
+  <Description>Configures the Epsilan server-initiated cloud connection. Applying a new configuration restarts the server.</Description>
+  <Command>
+    <Identifier>SetCloudConnection</Identifier>
+    <DisplayName>Set Cloud Connection</DisplayName>
+    <Description>Stores the cloud gateway endpoint, port, and TLS setting, then restarts the server to apply them.</Description>
+    <Observable>No</Observable>
+    <Parameter>
+      <Identifier>CloudEndpoint</Identifier>
+      <DisplayName>Cloud Endpoint</DisplayName>
+      <Description>Gateway hostname without a scheme or port.</Description>
+      <DataType><Constrained><DataType><Basic>String</Basic></DataType><Constraints><MaximalLength>127</MaximalLength></Constraints></Constrained></DataType>
+    </Parameter>
+    <Parameter>
+      <Identifier>CloudPort</Identifier>
+      <DisplayName>Cloud Port</DisplayName>
+      <Description>Gateway TCP port.</Description>
+      <DataType><Constrained><DataType><Basic>Integer</Basic></DataType><Constraints><MinimalExclusive>0</MinimalExclusive><MaximalInclusive>65535</MaximalInclusive></Constraints></Constrained></DataType>
+    </Parameter>
+    <Parameter>
+      <Identifier>UseTLS</Identifier>
+      <DisplayName>Use TLS</DisplayName>
+      <Description>Whether the cloud connection uses TLS.</Description>
+      <DataType><Basic>Boolean</Basic></DataType>
+    </Parameter>
+    <Parameter>
+      <Identifier>Enabled</Identifier>
+      <DisplayName>Enabled</DisplayName>
+      <Description>Whether the cloud connection should be enabled.</Description>
+      <DataType><Basic>Boolean</Basic></DataType>
+    </Parameter>
+  </Command>
+  <Property>
+    <Identifier>CloudEndpoint</Identifier><DisplayName>Cloud Endpoint</DisplayName><Description>Configured gateway hostname.</Description><Observable>No</Observable>
+    <DataType><Basic>String</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>CloudPort</Identifier><DisplayName>Cloud Port</DisplayName><Description>Configured gateway port.</Description><Observable>No</Observable>
+    <DataType><Basic>Integer</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>UseTLS</Identifier><DisplayName>Use TLS</DisplayName><Description>Whether TLS is configured for the cloud connection.</Description><Observable>No</Observable>
+    <DataType><Basic>Boolean</Basic></DataType>
+  </Property>
+  <Property>
+    <Identifier>Enabled</Identifier><DisplayName>Enabled</DisplayName><Description>Whether the cloud connection is enabled.</Description><Observable>No</Observable>
+    <DataType><Basic>Boolean</Basic></DataType>
+  </Property>
+</Feature>

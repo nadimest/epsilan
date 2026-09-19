@@ -22,6 +22,8 @@
 #include "wifi_provisioning/scheme_ble.h"
 #include "bsp/esp-bsp.h"
 #include "bmi270.h"
+#include "cloud_client.h"
+#include "cloud_config.h"
 #include "lvgl.h"
 #include "sila_server.h"
 
@@ -36,6 +38,7 @@ static char server_uuid[37];
 static char network_status[128] = "Wi-Fi starting...";
 static char setup_name[16];
 static char setup_pop[16];
+static epsilan_cloud_config_t cloud_config;
 static bool wifi_ready;
 static bool provisioning_active;
 static volatile bool setup_requested;
@@ -76,6 +79,7 @@ static esp_err_t load_settings(void)
             brightness = saved_brightness;
         }
     }
+    if (err == ESP_OK) err = epsilan_cloud_config_load(&cloud_config);
     nvs_close(nvs);
     return err;
 }
@@ -208,6 +212,7 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
                  IP2STR(&event->ip_info.ip), EPSILAN_SILA_PORT);
         ESP_LOGI(TAG, "Wi-Fi connected: " IPSTR, IP2STR(&event->ip_info.ip));
         ESP_ERROR_CHECK(sila_server_start(server_uuid));
+        ESP_ERROR_CHECK(epsilan_cloud_client_start());
     } else if (event_base == WIFI_PROV_EVENT) {
         if (event_id == WIFI_PROV_CRED_SUCCESS) {
             ESP_ERROR_CHECK(mark_epsilan_wifi_configured());
@@ -290,11 +295,13 @@ static void handle_command(const char *line)
         }
         ESP_LOGI(TAG, "COMMAND backlight=%u result=%s", requested, esp_err_to_name(err));
     } else if (!strcmp(line, "info")) {
-        ESP_LOGI(TAG, "INFO firmware=0.1.0-bringup uuid=%s internal_free=%u internal_min=%u psram=%u brightness=%u",
+        ESP_LOGI(TAG, "INFO firmware=0.1.0-bringup uuid=%s internal_free=%u internal_min=%u psram=%u brightness=%u cloud=%s endpoint=%s port=%u tls=%s",
                  server_uuid,
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                 (unsigned)esp_psram_get_size(), brightness);
+                 (unsigned)esp_psram_get_size(), brightness,
+                 cloud_config.enabled ? "on" : "off", cloud_config.endpoint,
+                 cloud_config.port, cloud_config.tls ? "true" : "false");
     } else if (!strncmp(line, "wifi ", 5)) {
         char ssid[33];
         char password[65];

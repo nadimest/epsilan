@@ -9,6 +9,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "cloud_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
@@ -28,12 +29,17 @@
 static const char *TAG = "epsilan_sila";
 static const char *CORE_FQI = "org.silastandard/core/SiLAService/v1";
 static const char *ACCEL_FQI = "io.epsilan/sensors/Accelerometer/v1";
+static const char *CLOUD_FQI = "io.epsilan/cloud/CloudConfiguration/v1";
 static const char *CORE_PATH = "/sila2.org.silastandard.core.silaservice.v1.SiLAService/";
+static const char *CLOUD_PATH = "/sila2.io.epsilan.cloud.cloudconfiguration.v1.CloudConfiguration/";
+static const char *LEGACY_CLOUD_PATH = "/sila2.io.epsilan.configuration.cloudconfiguration.v1.CloudConfiguration/";
 
 extern const uint8_t sila_service_xml_start[] asm("_binary_SiLAService_sila_xml_start");
 extern const uint8_t sila_service_xml_end[] asm("_binary_SiLAService_sila_xml_end");
 extern const uint8_t accelerometer_xml_start[] asm("_binary_Accelerometer_sila_xml_start");
 extern const uint8_t accelerometer_xml_end[] asm("_binary_Accelerometer_sila_xml_end");
+extern const uint8_t cloud_configuration_xml_start[] asm("_binary_CloudConfiguration_sila_xml_start");
+extern const uint8_t cloud_configuration_xml_end[] asm("_binary_CloudConfiguration_sila_xml_end");
 
 typedef struct stream_state {
     struct stream_state *next;
@@ -137,9 +143,83 @@ static uint8_t *wrap_cstring(const char *text, size_t *out_length)
     return wrap_string((const uint8_t *)text, strlen(text), out_length);
 }
 
+static uint8_t *wrap_varint(uint64_t value, size_t *out_length)
+{
+    size_t inner_length = 1 + varint_size((size_t)value);
+    size_t total = 1 + varint_size(inner_length) + inner_length;
+    uint8_t *message = malloc(total);
+    if (!message) return NULL;
+    uint8_t *out = message;
+    *out++ = 0x0a;
+    out = write_varint(out, inner_length);
+    *out++ = 0x08;
+    out = write_varint(out, (size_t)value);
+    *out_length = total;
+    return message;
+}
+
+static bool read_request_field(const uint8_t *request, size_t request_length, size_t wanted,
+                               const uint8_t **value, size_t *value_length)
+{
+    const uint8_t *cursor = request;
+    const uint8_t *end = request + request_length;
+    while (cursor < end) {
+        size_t tag;
+        size_t length;
+        if (!read_varint(&cursor, end, &tag)) return false;
+        if (tag == wanted * 8 + 2) {
+            if (!read_varint(&cursor, end, &length) || length > (size_t)(end - cursor)) return false;
+            *value = cursor;
+            *value_length = length;
+            return true;
+        }
+        if ((tag & 7) == 0) {
+            size_t ignored;
+            if (!read_varint(&cursor, end, &ignored)) return false;
+        } else if ((tag & 7) == 2) {
+            if (!read_varint(&cursor, end, &length) || length > (size_t)(end - cursor)) return false;
+            cursor += length;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
+static bool read_field_one_varint(const uint8_t *data, size_t length, uint64_t *value)
+{
+    const uint8_t *cursor = data;
+    const uint8_t *end = data + length;
+    size_t tag;
+    size_t parsed;
+    if (!read_varint(&cursor, end, &tag) || tag != 0x08 || !read_varint(&cursor, end, &parsed)) {
+        return false;
+    }
+    *value = parsed;
+    return true;
+}
+
+static void restart_timer_callback(void *arg)
+{
+    (void)arg;
+    esp_restart();
+}
+
+static void restart_after_configuration(void)
+{
+    const esp_timer_create_args_t args = {
+        .callback = restart_timer_callback,
+        .name = "cloud_config_restart",
+    };
+    esp_timer_handle_t timer;
+    if (esp_timer_create(&args, &timer) == ESP_OK) {
+        esp_timer_start_once(timer, 750000);
+    }
+}
+
 static uint8_t *implemented_features(size_t *out_length)
 {
-    const char *features[] = { CORE_FQI, ACCEL_FQI };
+    const char *features[] = { CORE_FQI, ACCEL_FQI, CLOUD_FQI };
     size_t total = 0;
     for (size_t i = 0; i < ARRAY_SIZE(features); ++i) {
         size_t text_length = strlen(features[i]);
@@ -297,6 +377,9 @@ static bool prepare_unary_response(stream_state_t *stream)
                 } else if (identifier_length == strlen(ACCEL_FQI) && !memcmp(identifier, ACCEL_FQI, identifier_length)) {
                     xml_start = accelerometer_xml_start;
                     xml_end = accelerometer_xml_end;
+                } else if (identifier_length == strlen(CLOUD_FQI) && !memcmp(identifier, CLOUD_FQI, identifier_length)) {
+                    xml_start = cloud_configuration_xml_start;
+                    xml_end = cloud_configuration_xml_end;
                 }
             }
             if (xml_start) {
@@ -306,6 +389,68 @@ static bool prepare_unary_response(stream_state_t *stream)
                     protobuf = wrap_string(xml, xml_length, &protobuf_length);
                     free(xml);
                 }
+            }
+        }
+    } else if (!strncmp(method, CLOUD_PATH, strlen(CLOUD_PATH)) ||
+               !strncmp(method, LEGACY_CLOUD_PATH, strlen(LEGACY_CLOUD_PATH))) {
+        method += !strncmp(method, CLOUD_PATH, strlen(CLOUD_PATH))
+            ? strlen(CLOUD_PATH) : strlen(LEGACY_CLOUD_PATH);
+        epsilan_cloud_config_t config;
+        if (epsilan_cloud_config_load(&config) != ESP_OK) {
+            stream->grpc_status = 13;
+            protobuf = calloc(1, 1);
+        } else if (!strcmp(method, "Get_CloudEndpoint")) {
+            protobuf = wrap_cstring(config.endpoint, &protobuf_length);
+        } else if (!strcmp(method, "Get_CloudPort")) {
+            protobuf = wrap_varint(config.port, &protobuf_length);
+        } else if (!strcmp(method, "Get_UseTLS")) {
+            protobuf = wrap_varint(config.tls ? 1 : 0, &protobuf_length);
+        } else if (!strcmp(method, "Get_Enabled")) {
+            protobuf = wrap_varint(config.enabled ? 1 : 0, &protobuf_length);
+        } else if (!strcmp(method, "SetCloudConnection")) {
+            const uint8_t *request;
+            size_t request_length;
+            const uint8_t *endpoint_parameter;
+            size_t endpoint_parameter_length;
+            const uint8_t *endpoint;
+            size_t endpoint_length;
+            const uint8_t *port_parameter;
+            size_t port_parameter_length;
+            const uint8_t *tls_parameter;
+            size_t tls_parameter_length;
+            const uint8_t *enabled_parameter;
+            size_t enabled_parameter_length;
+            uint64_t port;
+            uint64_t tls;
+            uint64_t enabled;
+            if (grpc_request_message(stream, &request, &request_length) &&
+                read_request_field(request, request_length, 1, &endpoint_parameter, &endpoint_parameter_length) &&
+                read_field_one_bytes(endpoint_parameter, endpoint_parameter_length, &endpoint, &endpoint_length) &&
+                endpoint_length < sizeof(config.endpoint) &&
+                read_request_field(request, request_length, 2, &port_parameter, &port_parameter_length) &&
+                read_field_one_varint(port_parameter, port_parameter_length, &port) &&
+                read_request_field(request, request_length, 3, &tls_parameter, &tls_parameter_length) &&
+                read_field_one_varint(tls_parameter, tls_parameter_length, &tls) &&
+                read_request_field(request, request_length, 4, &enabled_parameter, &enabled_parameter_length) &&
+                read_field_one_varint(enabled_parameter, enabled_parameter_length, &enabled) &&
+                port >= 1 && port <= 65535 && tls <= 1 && enabled <= 1 &&
+                (enabled == 0 || endpoint_length > 0)) {
+                memcpy(config.endpoint, endpoint, endpoint_length);
+                config.endpoint[endpoint_length] = 0;
+                epsilan_cloud_config_normalize(&config);
+                config.port = (uint16_t)port;
+                config.tls = tls != 0;
+                config.enabled = enabled != 0;
+                if (epsilan_cloud_config_save(&config) == ESP_OK) {
+                    protobuf = calloc(1, 1);
+                    restart_after_configuration();
+                } else {
+                    stream->grpc_status = 13;
+                    protobuf = calloc(1, 1);
+                }
+            } else {
+                stream->grpc_status = 3;
+                protobuf = calloc(1, 1);
             }
         }
     } else if (!strcmp(method, "/sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer/Subscribe_Acceleration")) {
@@ -319,6 +464,74 @@ static bool prepare_unary_response(stream_state_t *stream)
         protobuf = calloc(1, 1);
     }
     return protobuf && set_grpc_response(stream, protobuf, protobuf_length);
+}
+
+bool sila_server_cloud_unary_call(const char *fqi, bool is_property,
+                                  const uint8_t *request, size_t request_length,
+                                  uint8_t **response, size_t *response_length,
+                                  int *grpc_status)
+{
+    if (!fqi || !response || !response_length || !grpc_status ||
+        request_length > MAX_REQUEST_BYTES - 5) {
+        return false;
+    }
+
+    const char *feature = NULL;
+    const char *service = NULL;
+    if (!strncmp(fqi, CORE_FQI, strlen(CORE_FQI)) &&
+        fqi[strlen(CORE_FQI)] == '/') {
+        feature = CORE_FQI;
+        service = "sila2.org.silastandard.core.silaservice.v1.SiLAService";
+    } else if (!strncmp(fqi, ACCEL_FQI, strlen(ACCEL_FQI)) &&
+               fqi[strlen(ACCEL_FQI)] == '/') {
+        feature = ACCEL_FQI;
+        service = "sila2.io.epsilan.sensors.accelerometer.v1.Accelerometer";
+    } else if (!strncmp(fqi, CLOUD_FQI, strlen(CLOUD_FQI)) &&
+               fqi[strlen(CLOUD_FQI)] == '/') {
+        feature = CLOUD_FQI;
+        service = "sila2.io.epsilan.cloud.cloudconfiguration.v1.CloudConfiguration";
+    } else {
+        return false;
+    }
+
+    const char *kind = is_property ? "/Property/" : "/Command/";
+    size_t prefix = strlen(feature);
+    size_t kind_length = strlen(kind);
+    if (strncmp(fqi + prefix, kind, kind_length) || fqi[prefix + kind_length] == '\0') {
+        return false;
+    }
+
+    stream_state_t stream = { .grpc_status = 0 };
+    int written = snprintf(stream.path, sizeof(stream.path), "/%s/%s%s",
+                           service, is_property ? "Get_" : "",
+                           fqi + prefix + kind_length);
+    if (written < 0 || (size_t)written >= sizeof(stream.path)) return false;
+
+    stream.request[0] = 0;
+    stream.request[1] = (uint8_t)(request_length >> 24);
+    stream.request[2] = (uint8_t)(request_length >> 16);
+    stream.request[3] = (uint8_t)(request_length >> 8);
+    stream.request[4] = (uint8_t)request_length;
+    if (request_length) memcpy(stream.request + 5, request, request_length);
+    stream.request_len = request_length + 5;
+
+    bool prepared = prepare_unary_response(&stream);
+    *grpc_status = stream.grpc_status;
+    if (!prepared || stream.response_len < 5) {
+        free(stream.response);
+        return false;
+    }
+    size_t payload_length = stream.response_len - 5;
+    uint8_t *payload = malloc(payload_length ? payload_length : 1);
+    if (!payload) {
+        free(stream.response);
+        return false;
+    }
+    if (payload_length) memcpy(payload, stream.response + 5, payload_length);
+    free(stream.response);
+    *response = payload;
+    *response_length = payload_length;
+    return true;
 }
 
 static stream_state_t *find_stream(connection_t *connection, int32_t id)

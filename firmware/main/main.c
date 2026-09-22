@@ -48,10 +48,13 @@ static bool provisioning_active;
 static bool runtime_screen_active;
 static volatile bool setup_requested;
 static volatile bool runtime_screen_requested;
+static volatile bool network_services_requested;
+static int64_t network_services_retry_after_us;
 
 static void setup_button_event(lv_event_t *event);
 static esp_err_t set_wifi_credentials(const char *ssid, const char *password);
 static esp_err_t load_or_create_token(const char *key, char *value, size_t value_size, const char *prefix);
+static void start_network_services_if_ready(void);
 
 static void set_network_status(const char *value)
 {
@@ -146,7 +149,7 @@ static void show_setup_screen(void)
     lv_label_set_text(title, "SET UP EPSILAN");
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 14, 10);
     setup_qr = lv_qrcode_create(screen);
-    lv_qrcode_set_size(setup_qr, 112);
+    lv_qrcode_set_size(setup_qr, 150);
     lv_qrcode_set_dark_color(setup_qr, lv_color_hex(0x101b27));
     lv_qrcode_set_light_color(setup_qr, lv_color_hex(0xe5eff9));
     lv_qrcode_set_quiet_zone(setup_qr, true);
@@ -155,12 +158,12 @@ static void show_setup_screen(void)
              "{\"ver\":\"v1\",\"name\":\"%s\",\"pop\":\"%s\",\"transport\":\"ble\",\"security\":1}",
              setup_name, setup_pop);
     lv_qrcode_update(setup_qr, pairing_uri, strlen(pairing_uri));
-    lv_obj_align(setup_qr, LV_ALIGN_LEFT_MID, 12, 10);
+    lv_obj_align(setup_qr, LV_ALIGN_LEFT_MID, 10, 10);
     setup_details = lv_label_create(screen);
     lv_label_set_text_fmt(setup_details,
-                          "Open ESP BLE\nProvisioning\n\nScan this QR\n\nDevice %s\nPoP %s",
+                          "ESP BLE\nProvisioning\n\nScan QR\n\nDevice\n%s\n\nPoP\n%s",
                           setup_name, setup_pop);
-    lv_obj_align(setup_details, LV_ALIGN_TOP_LEFT, 140, 48);
+    lv_obj_align(setup_details, LV_ALIGN_TOP_LEFT, 170, 42);
     status = lv_label_create(screen);
     lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 14, -8);
     lv_label_set_text(status, network_status);
@@ -207,8 +210,7 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
         snprintf(network_status, sizeof(network_status), "Wi-Fi " IPSTR " / SiLA :%d",
                  IP2STR(&event->ip_info.ip), EPSILAN_SILA_PORT);
         ESP_LOGI(TAG, "Wi-Fi connected: " IPSTR, IP2STR(&event->ip_info.ip));
-        ESP_ERROR_CHECK(sila_server_start(server_uuid));
-        ESP_ERROR_CHECK(epsilan_cloud_client_start());
+        network_services_requested = true;
     } else if (event_base == WIFI_PROV_EVENT) {
         if (event_id == WIFI_PROV_CRED_SUCCESS) {
             ESP_ERROR_CHECK(mark_epsilan_wifi_configured());
@@ -218,11 +220,31 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
             set_network_status("Wi-Fi failed; retry in app");
             ESP_LOGW(TAG, "BLE provisioning failed; check credentials and retry");
         } else if (event_id == WIFI_PROV_END) {
-            provisioning_active = false;
             wifi_prov_mgr_deinit();
+            provisioning_active = false;
             runtime_screen_requested = true;
         }
     }
+}
+
+static void start_network_services_if_ready(void)
+{
+    if (!network_services_requested || provisioning_active || !wifi_connected) return;
+
+    int64_t now = esp_timer_get_time();
+    if (now < network_services_retry_after_us) return;
+
+    esp_err_t sila_err = sila_server_start(server_uuid);
+    esp_err_t cloud_err = epsilan_cloud_client_start();
+    if (sila_err == ESP_OK && cloud_err == ESP_OK) {
+        network_services_requested = false;
+        ESP_LOGI(TAG, "Network services started after Wi-Fi handoff");
+        return;
+    }
+
+    network_services_retry_after_us = now + 5000000;
+    ESP_LOGE(TAG, "Network service startup deferred: SiLA=%s cloud=%s",
+             esp_err_to_name(sila_err), esp_err_to_name(cloud_err));
 }
 
 static esp_err_t set_wifi_credentials(const char *ssid, const char *password)
@@ -371,6 +393,7 @@ void app_main(void)
     bool discard = false;
     uint32_t sequence = 0;
     for (;;) {
+        start_network_services_if_ready();
         if (runtime_screen_requested) {
             runtime_screen_requested = false;
             bsp_display_lock(0);
